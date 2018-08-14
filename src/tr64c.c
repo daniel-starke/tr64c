@@ -306,7 +306,7 @@ int _tmain(int argc, TCHAR ** argv) {
 	}
 	
 	/* initialize random number generator */
-	srand(time(NULL));
+	srand((unsigned int)time(NULL));
 	
 	/* install signal handlers */
 	signalReceived = 0;
