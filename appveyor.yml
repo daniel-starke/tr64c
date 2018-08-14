@@ -5,7 +5,6 @@ configuration:
 
 platform:
  - Win32
- - x64
 
 image:
  - Visual Studio 2015
