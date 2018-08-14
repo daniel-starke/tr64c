@@ -3,7 +3,7 @@
  * @author Daniel Starke
  * @see hmd5.c
  * @date 2010-02-12
- * @version 2016-05-01
+ * @version 2018-08-14
  * 
  * DISCLAIMER
  * This file has no copyright assigned and is placed in the Public Domain.
@@ -22,7 +22,6 @@
 #define __LIBPCF_HMD5_H__
 
 #include <string.h>
-#include <inttypes.h>
 
 
 #ifdef __cplusplus
