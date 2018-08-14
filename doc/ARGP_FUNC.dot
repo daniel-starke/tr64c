@@ -1,0 +1,37 @@
+digraph ARGP_FUNC {
+	# dashed lines indicate that the transition returns the value to the user
+	rankdir=LR;
+	graph [fontsize=11, fontname=helvetica];
+	node [style=filled, fillcolor=lightgray, fontsize=11, fontname=helvetica];
+	edge [fontsize=11, fontname=helvetica];
+	START -> NEXT [label="initialize"];
+	subgraph ERRORS {
+		node [fillcolor=hotpink];
+		ERR_NON_OPT ERR_NULL_PTR ERR_INVALID_OPT ERR_MISSING_ARG ERR_AMBIGUOUS;
+	}
+	START -> ERR_NULL_PTR [label="pointer == NULL"];
+	NEXT -> START [label="i < lastOpt", constraint=false];
+	NEXT -> END [label="i >= argc"];
+	NEXT:w -> NEXT:w [label=<[^-].* <FONT COLOR="blue">AND</FONT><BR/>POSIXLY_CORRECT>];
+	NEXT -> ARG [label=<[^-].*<BR/><FONT COLOR="blue">AND </FONT>ARG_ONE<BR/><FONT COLOR="blue">AND </FONT>!POSIXLY_CORRECT>];
+	NEXT -> SHORT [label=<-[^-].*<BR/><FONT COLOR="blue">AND </FONT>SHORT>];
+	NEXT -> LONG [label=<LONG <FONT COLOR="blue">AND </FONT>(--.* <FONT COLOR="blue">OR</FONT><BR/>(-[^-].* <FONT COLOR="blue">AND </FONT>!SHORT))>];
+	NEXT -> ERR_NON_OPT [label=<-[\0-] <FONT COLOR="blue">OR </FONT>([^-].*<BR/><FONT COLOR="blue">AND </FONT>!ARG_ONE<BR/><FONT COLOR="blue">AND </FONT>!POSIXLY_CORRECT)>];
+	ARG -> ERR_MISSING_ARG [label=<arg == NULL<BR/><FONT COLOR="blue">AND </FONT>required>];
+	ARG -> NEXT [label=<arg != NULL<BR/><FONT COLOR="blue">OR </FONT>optional>, style=dashed];
+	SHORT -> LONG [label=<LONG <FONT COLOR="blue">AND</FONT><BR/>-W <FONT COLOR="blue">AND </FONT>GNU_W>];
+	SHORT -> ARG [label="   ", taillabel=<optional<BR/><FONT COLOR="blue">OR </FONT>required>, labeldistance="5", labelangle="20"];
+	SHORT -> NEXT [label="no argument", style=dashed];
+	SHORT -> ERR_INVALID_OPT [label="undefined"];
+	LONG -> ARG [label="   ", taillabel=<optional<BR/><FONT COLOR="blue">OR </FONT>required>, labeldistance="7", labelangle="17"];
+	LONG -> NEXT [label="no argument", style=dashed];
+	LONG -> ERR_INVALID_OPT [label="undefined"];
+	LONG -> ERR_AMBIGUOUS [label="same prefix\nfor >1 option"];
+	ERR_NON_OPT -> END;
+	ERR_NULL_PTR -> END;
+	ERR_INVALID_OPT -> END;
+	ERR_MISSING_ARG -> END;
+	ERR_AMBIGUOUS -> END;
+	{ rank=same; SHORT LONG }
+	{ rank=same; ERR_NON_OPT ERR_NULL_PTR ERR_INVALID_OPT ERR_MISSING_ARG ERR_AMBIGUOUS }
+}
