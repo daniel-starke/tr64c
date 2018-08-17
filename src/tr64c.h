@@ -2,7 +2,7 @@
  * @file tr64c.h
  * @author Daniel Starke
  * @date 2018-06-21
- * @version 2018-08-14
+ * @version 2018-08-16
  * @todo WinHTTP backend: https://social.msdn.microsoft.com/Forums/en-US/e141be2b-f621-4419-a6fb-8d86134f1f43/httpsendrequest-amp-internetreadfile-in-c?forum=vclanguage
  * 
  * DISCLAIMER
@@ -27,6 +27,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include "bsearch.h"
 #include "cvutf8.h"
 #include "parser.h"
 #include "target.h"
@@ -87,15 +88,14 @@
 
 
 typedef enum {
-#ifdef UNICODE
 	GETOPT_UTF8 = 1,
-#endif /* UNICODE */
 	GETOPT_VERSION = 2
 } tLongOption;
 
 
 typedef enum {
-	F_CSV = 0,
+	F_TEXT = 0,
+	F_CSV,
 	F_JSON,
 	F_XML
 } tFormat;
@@ -158,17 +158,20 @@ typedef enum {
 	MSGT_ERR_HTTP_SEND_REQ,
 	MSGT_ERR_HTTP_RECV_RESP,
 	MSGT_ERR_HTTP_STATUS,
+	MSGT_ERR_HTTP_STATUS_STR,
 	MSGT_ERR_HTTP_FMT_AUTH,
 	MSGT_ERR_HTTP_AUTH,
 	MSGT_ERR_URL_FMT,
 	MSGT_ERR_URL_PROT,
 	MSGT_ERR_FMT_QUERY,
 	MSGT_ERR_GET_QUERY_RESP,
+	MSGT_ERR_GET_QUERY_RESP_STR,
 	MSGT_ERR_QUERY_RESP_FMT,
 	MSGT_ERR_QUERY_RESP_ACTION,
 	MSGT_ERR_QUERY_RESP_ARG,
 	MSGT_ERR_QUERY_RESP_ARG_BAD_ESC,
 	MSGT_ERR_QUERY_PRINT,
+	MSGT_ERR_BAD_CMD,
 	MSGT_WARN_CACHE_READ,
 	MSGT_WARN_CACHE_FMT,
 	MSGT_WARN_CACHE_UNESC,
@@ -177,7 +180,6 @@ typedef enum {
 	MSGT_WARN_OPT_LOW_TIMEOUT,
 	MSGT_WARN_LIST_NO_MEM,
 	MSGT_WARN_CMD_BAD_ESC,
-	MSGT_WARN_BAD_CMD,
 	MSGT_INFO_SIGTERM,
 	MSGU_INFO_DEV_DESC_REQ,
 	MSGT_INFO_DEV_DESC_DUR,
@@ -239,6 +241,12 @@ typedef enum {
 
 
 typedef struct {
+	size_t status;
+	TCHAR * string;
+} tHttpStatusMsg;
+
+
+typedef struct {
 	char * url;
 	char * user;
 	char * pass;
@@ -292,12 +300,14 @@ typedef struct tTr64RequestCtx {
 	char * port; /**< allocated port number */
 	char * path; /**< allocated host path */
 	char * method; /**< allocated HTTP method (e.g. POST) */
+	tFormat format; /**< output format type */
 	size_t timeout; /**< network timeout in milliseconds */
 	size_t duration; /**< measured time span the requested option took in milliseconds */
 	size_t status; /**< HTTP response status */
 	size_t cnonce; /**< HTTP authentication client nonce (internal) */
 	size_t nc; /**< HTTP authentication nonce count (internal) */
 	char * auth; /**< HTTP authentication response (internal) */
+	int discoveryCount; /**< SSDP response count */
 	int (* discover)(struct tTr64RequestCtx *, const char *, int (*)(const char *, const size_t, void *), void *); /**< perform a simple service discovery */
 	tIpAddress * address; /**< resolved host IP/port addresses */
 	int (* resolve)(struct tTr64RequestCtx *); /**< host/port resolver */
@@ -417,6 +427,7 @@ extern FILE * fin;
 extern FILE * fout;
 extern FILE * ferr;
 extern const void * fmsg[MSG_COUNT];
+extern const tHttpStatusMsg httpStatMsg[44];
 
 
 #ifdef UNICODE
@@ -435,6 +446,7 @@ int arrayResize(void ** array, size_t * capacity, const size_t itemSize, const s
 #define arrayFieldResize(obj, field, size) arrayResize((void **)(&((obj)->field)), &((obj)->capacity), sizeof(*((obj)->field)), size)
 char * strndupInternal(const char * str, const size_t n);
 int strnicmpInternal(const char * lhs, const char * rhs, const size_t n);
+int cmpHttpStatusMsg(const tHttpStatusMsg * item, const size_t * value);
 int fputUtf8(FILE * fd, const char * str);
 int fputUtf8N(FILE * fd, const char * str, const size_t len);
 int parseActionPath(tOptions * opt, int argIndex);
@@ -466,7 +478,7 @@ int writeStringToFile(const TCHAR * dst, const char * str);
 int writeStringNToFile(const TCHAR * dst, const char * str, const size_t len);
 int initBackend(void);
 void deinitBackend(void);
-tTr64RequestCtx * newTr64Request(const char * url, const char * user, const char * pass, const size_t timeout, const int verbose);
+tTr64RequestCtx * newTr64Request(const char * url, const char * user, const char * pass, const tFormat format, const size_t timeout, const int verbose);
 void freeTr64Request(tTr64RequestCtx * ctx);
 
 

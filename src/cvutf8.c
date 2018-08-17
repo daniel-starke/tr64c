@@ -3,7 +3,7 @@
  * @author Daniel Starke
  * @see cvutf8.h
  * @date 2014-05-03
- * @version 2018-07-14
+ * @version 2018-08-15
  * 
  * DISCLAIMER
  * This file has no copyright assigned and is placed in the Public Domain.
@@ -53,6 +53,9 @@ wchar_t * cvutf8_toUtf16N(const char * utf8, const size_t len) {
 	if (utf8 == (const char *)NULL) {
 		return (wchar_t *)NULL;
 	}
+	if (len == 0) {
+		return (wchar_t *)calloc(1, sizeof(wchar_t));
+	}
 #ifdef PCF_IS_WIN
 	utf16Size = (size_t)MultiByteToWideChar(CP_UTF8, 0, utf8, (int)len, 0, 0);
 	if (utf16Size == 0xFFFD || utf16Size == 0) {
@@ -101,6 +104,9 @@ char * cvutf8_fromUtf16N(const wchar_t * utf16, const size_t len) {
 	size_t utf8Size;
 	if (utf16 == (const wchar_t *)NULL) {
 		return (char *)NULL;
+	}
+	if (len == 0) {
+		return (char *)calloc(1, sizeof(char));
 	}
 #ifdef PCF_IS_WIN
 	utf8Size = (size_t)WideCharToMultiByte(CP_UTF8, 0, utf16, (int)len, 0, 0, NULL, NULL);

@@ -4,5 +4,17 @@ M.N.P
 | +---- minor: increased if command-line syntax/semantic breaking changes were applied
 +------ major: increased if elementary changes (from user's point of view) were made
 
+1.1.0 (2018-08-17)
+ - added: HTTP common status message texts to error message outputs
+ - added: Python binding
+ - added: TEXT output format
+ - added: CSV, JSON and XML output to scan and list output
+ - changed: verbosity level of invalid command message in interactive mode from warning to error
+ - changed: ignore --utf8 for non-Unicode targets
+ - changed: command output in interactive mode to output an empty line at the end
+ - fixed: wrong verbosity level for some error and info messages
+ - fixed: missing flush on output in interactive mode
+ - fixed: conversion to/from UTF-8 for empty strings
+
 1.0.0 (2018-08-14)
  - first release

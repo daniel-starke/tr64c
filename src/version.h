@@ -2,7 +2,7 @@
  * @file version.h
  * @author Daniel Starke
  * @date 2018-07-13
- * @version 2018-08-08
+ * @version 2018-08-17
  * 
  * DISCLAIMER
  * This file has no copyright assigned and is placed in the Public Domain.
@@ -18,14 +18,14 @@
  * OTHER DEALINGS IN THE SOFTWARE.
  */
 
-#define PROGRAM_VERSION 1,0,0,0
+#define PROGRAM_VERSION 1,1,0,0
 
 #if defined(BACKEND_WINSOCKS)
 #define BACKEND_STR "WinSocks"
-#define PROGRAM_VERSION_STR "1.0.0 2018-08-14 WinSocks"
+#define PROGRAM_VERSION_STR "1.1.0 2018-08-17 WinSocks"
 #elif defined(BACKEND_POSIX)
 #define BACKEND_STR "POSIX"
-#define PROGRAM_VERSION_STR "1.0.0 2018-08-14 POSIX"
+#define PROGRAM_VERSION_STR "1.1.0 2018-08-17 POSIX"
 #else
 #error "Unsupported backend."
 #endif

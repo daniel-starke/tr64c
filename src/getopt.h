@@ -3,7 +3,7 @@
  * @author Daniel Starke
  * @see getopt.h
  * @date 2017-05-22
- * @version 2018-08-13
+ * @version 2018-08-15
  * 
  * DISCLAIMER
  * This file has no copyright assigned and is placed in the Public Domain.
@@ -20,7 +20,7 @@
  */
 #ifndef __LIBPCF_GETOPT_H__
 #define __LIBPCF_GETOPT_H__
-#define __GETOPT_H__ /* avoid collision with system getopt.h */
+#define __GETOPT_H__ /* avoid collision with cygwins getopt.h include in sys/unistd.h */
 
 #include "tchar.h"
 #include "target.h"

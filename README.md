@@ -19,7 +19,8 @@ Usage
           Cache action descriptions of the device in this file.
     -f, --format <string>
           Defines the output format for queries. Possible values are:
-          CSV  - comma-separated values (default)
+          TEXT - plain text (default)
+          CSV  - comma-separated values
           JSON - JavaScript Object Notation
           XML  - Extensible Markup Language
     -h, --help
@@ -50,6 +51,23 @@ Usage
         --version
           Outputs the program version.
 
+Example
+=======
+
+Scanning for available devices on local interface with IP address 192.168.178.10:  
+
+    tr64c -o 192.168.178.10 -l
+
+Listing possible action on FRITZ!Box 7490:  
+
+    tr64c -o http://192.168.178.1:49000/tr64desc.xml -l
+
+Obtaining some user interface properties from a FRITZ!Box 7490:  
+
+    tr64c -o http://192.168.178.1:49000/tr64desc.xml -q UserInterface/GetInfo
+
+Check also the binding example for Python [here](etc/tr64c.py).
+
 Building
 ========
 
@@ -74,7 +92,7 @@ Files
 |bsearch.*      |Binary search algorithm.
 |cvutf8.*       |UTF-8 conversion functions.
 |hmd5.*         |MD5 hashing function.
-|http.*         |HTTP1.x header parser.
+|http.*         |HTTP/1.x parser.
 |mingw-unicode.h|Unicode enabled main() for MinGW targets.
 |parser.*       |Text parsers and parser helpers.
 |sax.*          |SAX based XML parser.

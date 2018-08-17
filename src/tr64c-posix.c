@@ -2,7 +2,7 @@
  * @file tr64c_posix.c
  * @author Daniel Starke
  * @date 2018-06-21
- * @version 2018-08-14
+ * @version 2018-08-17
  * 
  * DISCLAIMER
  * This file has no copyright assigned and is placed in the Public Domain.
@@ -428,7 +428,14 @@ static int discover(struct tTr64RequestCtx * ctx, const char * localIf, int (* v
 			case PHRT_SUCCESS:
 				ctx->status = response.status;
 				if (response.status != 200) {
-					if (ctx->verbose > 1) _ftprintf(ferr, MSGT(MSGT_ERR_HTTP_STATUS), (unsigned)response.status);
+					if (ctx->verbose > 1) {
+						const tHttpStatusMsg * item = (const tHttpStatusMsg *)bs_staticArray(&(response.status), httpStatMsg, cmpHttpStatusMsg);
+						if (item != NULL) {
+							_ftprintf(ferr, MSGT(MSGT_ERR_HTTP_STATUS_STR), (unsigned)response.status, item->string);
+						} else  {
+							_ftprintf(ferr, MSGT(MSGT_ERR_HTTP_STATUS), (unsigned)response.status);
+						}
+					}
 					break;
 				} else if (response.content.start != NULL && response.content.start != ctx->buffer && response.content.length > 0) {
 					ctx->content = (char *)response.content.start;
@@ -609,6 +616,7 @@ onTryNext:
 #endif
 				if (ctx->verbose > 0) _ftprintf(ferr, MSGT(MSGT_ERR_SOCK_SEND_TOUT));
 				if (ctx->verbose > 1) printLastError(ferr);
+				ctx->status = 408;
 				goto onError;
 				break;
 			default:
@@ -701,7 +709,14 @@ onTryNext:
 				httpAuthentication(ctx, &response);
 				goto onError;
 			} else if (response.status != 200) {
-				if (ctx->verbose > 1) _ftprintf(ferr, MSGT(MSGT_ERR_HTTP_STATUS), (unsigned)response.status);
+				if (ctx->verbose > 1) {
+					const tHttpStatusMsg * item = (const tHttpStatusMsg *)bs_staticArray(&(response.status), httpStatMsg, cmpHttpStatusMsg);
+					if (item != NULL) {
+						_ftprintf(ferr, MSGT(MSGT_ERR_HTTP_STATUS_STR), (unsigned)response.status, item->string);
+					} else  {
+						_ftprintf(ferr, MSGT(MSGT_ERR_HTTP_STATUS), (unsigned)response.status);
+					}
+				}
 				goto onError;
 			} else if (response.content.start != NULL && response.content.start != ctx->buffer && response.content.length > 0) {
 				ctx->content = (char *)response.content.start;
@@ -732,6 +747,7 @@ onReceiveTimeout:
 			if (val > (uint64_t)(ctx->timeout)) {
 				if (ctx->verbose > 0) _ftprintf(ferr, MSGT(MSGT_ERR_SOCK_RECV_TOUT));
 				if (ctx->verbose > 1) printLastError(ferr);
+				ctx->status = 408;
 				goto onError; /* incomplete */
 			}
 			if (signalReceived != 0) goto onError;
@@ -841,11 +857,14 @@ static void printAddresses(const tTr64RequestCtx * ctx, FILE * fd) {
  * Create a new HTTP request context based on the given URL.
  * 
  * @param[in] url - base on this URL
+ * @param[in] user - user name
+ * @param[in] pass - password
+ * @param[in] format - output format type
  * @param[in] timeout - network timeouts in milliseconds
  * @param[in] verbose - verbosity level
  * @return Handle on success, else NULL.
  */
-tTr64RequestCtx * newTr64Request(const char * url, const char * user, const char * pass, const size_t timeout, const int verbose) {
+tTr64RequestCtx * newTr64Request(const char * url, const char * user, const char * pass, const tFormat format, const size_t timeout, const int verbose) {
 	if (verbose > 3) _ftprintf(ferr, MSGT(MSGT_DBG_ENTER_NEWTR64REQUEST));
 	if (url == NULL) return NULL;
 	
@@ -867,7 +886,7 @@ tTr64RequestCtx * newTr64Request(const char * url, const char * user, const char
 		if (res->user != NULL) free(res->user);
 		res->user = strdup(user);
 		if (res->user == NULL) {
-			if (verbose > 1) _ftprintf(ferr, MSGT(MSGT_ERR_NO_MEM));
+			if (verbose > 0) _ftprintf(ferr, MSGT(MSGT_ERR_NO_MEM));
 			goto onError;
 		}
 	}
@@ -875,11 +894,12 @@ tTr64RequestCtx * newTr64Request(const char * url, const char * user, const char
 		if (res->pass != NULL) free(res->pass);
 		res->pass = strdup(pass);
 		if (res->pass == NULL) {
-			if (verbose > 1) _ftprintf(ferr, MSGT(MSGT_ERR_NO_MEM));
+			if (verbose > 0) _ftprintf(ferr, MSGT(MSGT_ERR_NO_MEM));
 			goto onError;
 		}
 	}
 	
+	res->format = format;
 	res->timeout = timeout;
 	
 	res->discover = discover;

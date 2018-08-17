@@ -2,9 +2,8 @@
  * @file tr64c.c
  * @author Daniel Starke
  * @date 2018-06-21
- * @version 2018-08-14
+ * @version 2018-08-17
  * @todo Implement transaction session support.
- * @todo Apply output format to --list.
  * 
  * DISCLAIMER
  * This file has no copyright assigned and is placed in the Public Domain.
@@ -44,9 +43,13 @@
 
 
 volatile int signalReceived = 0;
+
+
 FILE * fin = NULL;
 FILE * fout = NULL;
 FILE * ferr = NULL;
+
+
 const void * fmsg[MSG_COUNT] = {
 	/* MSGT_SUCCESS                    */ _T(""), /* never used for output */
 	/* MSGT_ERR_NO_MEM                 */ _T("Error: Failed to allocate memory.\n"),
@@ -96,17 +99,20 @@ const void * fmsg[MSG_COUNT] = {
 	/* MSGT_ERR_HTTP_SEND_REQ          */ _T("Error: Failed to send request to server.\n"),
 	/* MSGT_ERR_HTTP_RECV_RESP         */ _T("Error: Failed to get response from server.\n"),
 	/* MSGT_ERR_HTTP_STATUS            */ _T("Error: Received HTTP response with status code %u.\n"),
+	/* MSGT_ERR_HTTP_STATUS_STR        */ _T("Error: Received HTTP response with status code %u - %s.\n"),
 	/* MSGT_ERR_HTTP_FMT_AUTH          */ _T("Error: Failed to format HTTP authentication response.\n"),
 	/* MSGT_ERR_HTTP_AUTH              */ _T("Error: Failed HTTP authentication.\n"),
 	/* MSGT_ERR_URL_FMT                */ _T("Error: Failed to parse the given URL.\n"),
 	/* MSGT_ERR_URL_PROT               */ _T("Error: Unsupported protocol in given URL.\n"),
 	/* MSGT_ERR_FMT_QUERY              */ _T("Error: Failed to format HTTP request for query.\n"),
 	/* MSGT_ERR_GET_QUERY_RESP         */ _T("Error: Failed to retrieve query response from server (%u).\n"),
+	/* MSGT_ERR_GET_QUERY_RESP_STR     */ _T("Error: Failed to retrieve query response from server (%u - %s).\n"),
 	/* MSGT_ERR_QUERY_RESP_FMT         */ _T("Error: The retrieve query response file format is invalid.\n"),
 	/* MSGT_ERR_QUERY_RESP_ACTION      */ _T("Error: Action name mismatch in query response.\n"),
 	/* MSGT_ERR_QUERY_RESP_ARG         */ _T("Error: Invalid action argument variable in query response.\n"),
 	/* MSGT_ERR_QUERY_RESP_ARG_BAD_ESC */ _T("Error: Invalid escape sequence in argument value of query response.\n"),
 	/* MSGT_ERR_QUERY_PRINT            */ _T("Error: Failed to write formatted query response.\n"),
+	/* MSGT_ERR_BAD_CMD                */ _T("Error: Invalid command.\n"),
 	/* MSGT_WARN_CACHE_READ            */ _T("Warning: Failed to read cache file content.\n"),
 	/* MSGT_WARN_CACHE_FMT             */ _T("Warning: The cache file format is invalid.\n"),
 	/* MSGT_WARN_CACHE_UNESC           */ _T("Warning: Failed to unescape field from cache file.\n"),
@@ -115,7 +121,6 @@ const void * fmsg[MSG_COUNT] = {
 	/* MSGT_WARN_OPT_LOW_TIMEOUT       */ _T("Warning: Timeout value is less than recommended (>=1000ms).\n"),
 	/* MSGT_WARN_LIST_NO_MEM           */ _T("Warning: Failed to allocate memory for list output.\n"),
 	/* MSGT_WARN_CMD_BAD_ESC           */ _T("Warning: Invalid escape sequence in command-line at column %u.\n"),
-	/* MSGT_WARN_BAD_CMD               */ _T("Warning: Invalid command was ignored.\n"),
 	/* MSGT_INFO_SIGTERM               */ _T("Info: Received signal. Finishing current operation.\n"),
 	/* MSGU_INFO_DEV_DESC_REQ          */    "Info: Requesting /%s from device.\n",
 	/* MSGT_INFO_DEV_DESC_DUR          */ _T("Info: Finished device description request in %u ms.\n"),
@@ -139,6 +144,58 @@ const void * fmsg[MSG_COUNT] = {
 };
 
 
+const tHttpStatusMsg httpStatMsg[] = {
+	/* Success */
+	{200, _T("OK")},
+	/* Redirection */
+	{300, _T("Multiple Choices")},
+	{301, _T("Moved Permanently")},
+	{302, _T("Found")},
+	{303, _T("See Other")},
+	{304, _T("Not Modified")},
+	{305, _T("Use Proxy")},
+	{306, _T("Switch Proxy")},
+	{307, _T("Temporary Redirect")},
+	{308, _T("Permanent Redirect")},
+	/* Client errors */
+	{400, _T("Bad Request")},
+	{401, _T("Unauthorized")},
+	{402, _T("Payment Required")},
+	{403, _T("Forbidden")},
+	{404, _T("Not Found")},
+	{405, _T("Method Not Allowed")},
+	{406, _T("Not Acceptable")},
+	{407, _T("Proxy Authentication Required")},
+	{408, _T("Request Timeout")},
+	{409, _T("Conflict")},
+	{410, _T("Gone")},
+	{411, _T("Length Required")},
+	{412, _T("Precondition Failed")},
+	{413, _T("Payload Too Large")},
+	{414, _T("URI Too Long")},
+	{415, _T("Unsupported Media Type")},
+	{416, _T("Range Not Satisfiable")},
+	{417, _T("Expectation Failed")},
+	{418, _T("I'm a teapot")},
+	{421, _T("Misdirected Request")},
+	{426, _T("Upgrade Required")},
+	{428, _T("Precondition Required")},
+	{429, _T("Too Many Requests")},
+	{431, _T("Request Header Fields Too Large")},
+	{451, _T("Unavailable For Legal Reasons")},
+	/* Server errors */
+	{500, _T("Internal Server Error")},
+	{501, _T("Not Implemented")},
+	{502, _T("Bad Gateway")},
+	{503, _T("Service Unavailable")},
+	{504, _T("Gateway Timeout")},
+	{505, _T("HTTP Version Not Supported")},
+	{506, _T("Variant Also Negotiates")},
+	{510, _T("Not Extended")},
+	{511, _T("Network Authentication Required")}
+};
+
+
 /**
  * Main entry point.
  */
@@ -153,9 +210,7 @@ int _tmain(int argc, TCHAR ** argv) {
 		handleInteractive
 	};
 	struct option longOptions[] = {
-#ifdef UNICODE
 		{_T("utf8"),        no_argument,       NULL,    GETOPT_UTF8},
-#endif /* UNICODE */
 		{_T("version"),     no_argument,       NULL, GETOPT_VERSION},
 		{_T("cache"),       required_argument, NULL,        _T('c')},
 		{_T("format"),      required_argument, NULL,        _T('f')},
@@ -192,19 +247,19 @@ int _tmain(int argc, TCHAR ** argv) {
 
 	opt.verbose++;
 	opt.timeout = DEFAULT_TIMEOUT;
-	opt.format = F_CSV;
+	opt.format = F_TEXT;
 	while (1) {
 		res = getopt_long(argc, argv, _T(":c:f:hil:o:p:st:u:v"), longOptions, NULL);
 
 		if (res == -1) break;
 		switch (res) {
-#ifdef UNICODE
 		case GETOPT_UTF8:
+#ifdef UNICODE
 			_setmode(_fileno(fout), _O_U8TEXT);
 			_setmode(_fileno(ferr), _O_U8TEXT);
 			opt.narrow = 1;
-			break;
 #endif /* UNICODE */
+			break;
 		case GETOPT_VERSION:
 			_putts(_T2(PROGRAM_VERSION_STR));
 			goto onSuccess;
@@ -214,7 +269,9 @@ int _tmain(int argc, TCHAR ** argv) {
 			break;
 		case _T('f'):
 			for (TCHAR * ch = optarg; *ch != 0; ch++) *ch = _totupper(*ch);
-			if (_tcscmp(optarg, _T("CSV")) == 0) {
+			if (_tcscmp(optarg, _T("TEXT")) == 0) {
+				opt.format = F_TEXT;
+			} else if (_tcscmp(optarg, _T("CSV")) == 0) {
 				opt.format = F_CSV;
 			} else if (_tcscmp(optarg, _T("JSON")) == 0) {
 				opt.format = F_JSON;
@@ -351,8 +408,9 @@ void printHelp(void) {
 	_T("-c, --cache <file>\n")
 	_T("      Cache action descriptions of the device in this file.\n")
 	_T("-f, --format <string>\n")
-	_T("      Defines the output format for queries. Possible values are:\n")
-	_T("      CSV  - comma-separated values (default)\n")
+	_T("      Defines the output format. Possible values are:\n")
+	_T("      TEXT - plain text (default)\n")
+	_T("      CSV  - comma-separated values\n")
 	_T("      JSON - JavaScript Object Notation\n")
 	_T("      XML  - Extensible Markup Language\n")
 	_T("-h, --help\n")
@@ -489,6 +547,18 @@ int strnicmpInternal(const char * lhs, const char * rhs, size_t n) {
 		return 0;
 	}
 	return toupper(*left) - toupper(*right);
+}
+
+
+/**
+ * Compares the given value to the passed item status code. Used for binary search in httpStatMsg.
+ * 
+ * @param[in] item - left-hand statement of comparison
+ * @param[in] value - right-hand statement of comparison
+ * @return -1 if smaller, 0 if equal and 1 if value is larger
+ */
+int cmpHttpStatusMsg(const tHttpStatusMsg * item, const size_t * value) {
+	return item->status < *value ? -1 : item->status > *value ? 1 : 0;
 }
 
 
@@ -758,6 +828,137 @@ int parseActionPath(tOptions * opt, int argIndex) {
 	return 1;
 onError:
 	return 0;
+}
+
+
+/**
+ * Escapes the given string to encode as CSV field.
+ * 
+ * @param[in] str - string to escape
+ * @param[in] length - maximum length of the input string in bytes
+ * @return escapes string or NULL on error
+ * @remarks The returned string may be the same as the input if no escaping was needed.
+ */
+static char * escapeCsv(const char * str, const size_t length) {
+	if (str == NULL) return NULL;
+	/* calculate the result string size in bytes */
+	size_t resSize = 1;
+	size_t i = 0;
+	for (const char * in = str; *in != 0 && i < length; in++, i++, resSize++) {
+		if (*in == '"') resSize++;
+	}
+	if ((i + 1) == resSize) return (char *)str;
+	/* create the result string */
+	char * res = (char *)malloc(sizeof(char) * resSize);
+	if (res == NULL) return NULL;
+	i = 0;
+	char * out = res;
+	for (const char * in = str; *in != 0 && i < length; in++, i++) {
+		if (*in == '"') *out++ = '"';
+		*out++ = *in;
+	}
+	*out = 0;
+	return res;
+}
+
+
+/**
+ * Escapes the given string to encode as JSON string.
+ * 
+ * @param[in] str - string to escape
+ * @param[in] length - maximum length of the input string in bytes
+ * @return escapes string or NULL on error
+ * @remarks The returned string may be the same as the input if no escaping was needed.
+ * @see https://tools.ietf.org/html/rfc8259#section-7
+ */
+static char * escapeJson(const char * str, const size_t length) {
+	static const char hex[] = "0123456789ABCDEF";
+	if (str == NULL) return NULL;
+	/* calculate the result string size in bytes */
+	size_t resSize = 1;
+	size_t i = 0;
+	for (const char * in = str; *in != 0 && i < length; in++, i++) {
+		switch (*in) {
+		case '"':
+		case '\\':
+		case '/':
+		case '\b':
+		case '\f':
+		case '\n':
+		case '\r':
+		case '\t':
+			resSize += 2;
+			break;
+		default:
+			if (*in < 0x20) {
+				resSize += 6;
+			} else {
+				resSize++;
+			}
+			break;
+		}
+	}
+	if ((i + 1) == resSize) return (char *)str;
+	/* create the result string */
+	char * res = (char *)malloc(sizeof(char) * resSize);
+	if (res == NULL) return NULL;
+	i = 0;
+	char * out = res;
+	for (const char * in = str; *in != 0 && i < length; in++, i++) {
+		switch (*in) {
+		case '"':  *out++ = '\\'; *out++ = '"';  break;
+		case '\\': *out++ = '\\'; *out++ = '\\'; break;
+		case '/':  *out++ = '\\'; *out++ = '/';  break;
+		case '\b': *out++ = '\\'; *out++ = 'b';  break;
+		case '\f': *out++ = '\\'; *out++ = 'f';  break;
+		case '\n': *out++ = '\\'; *out++ = 'n';  break;
+		case '\r': *out++ = '\\'; *out++ = 'r';  break;
+		case '\t': *out++ = '\\'; *out++ = 't';  break;
+		default:
+			if (*in < 0x20) {
+				*out++ = '\\';
+				*out++ = 'u';
+				*out++ = '0';
+				*out++ = '0';
+				*out++ = hex[(*in >> 4) & 0x0F];
+				*out++ = hex[*in & 0x0F];
+			} else {
+				*out++ = *in;
+			}
+			break;
+		}
+	}
+	*out = 0;
+	return res;
+}
+
+
+/**
+ * Maps the given TR-064 argument type to a JSON type.
+ * 
+ * @param[in] type - TR-064 argument type
+ * @return mapped JSON type
+ */
+static tJsonType mapToJsonType(const char * type) {
+	if (type == NULL) return JT_NULL;
+	if (stricmp(type, "boolean") == 0) return JT_BOOLEAN;
+	if (tolower(*type) == 'u') type++;
+	if (tolower(*type) != 'i') return JT_STRING;
+	char * endPtr = NULL;
+	unsigned long bits = strtoul(type + 1, &endPtr, 10);
+	if (endPtr != NULL && *endPtr == 0) {
+		switch (bits) {
+		case 1:
+		case 2:
+		case 4:
+		case 8:
+			return JT_NUMBER;
+			break;
+		default:
+			break;
+		}
+	}
+	return JT_STRING;
 }
 
 
@@ -1955,22 +2156,22 @@ onCacheFileError:
 	/* read device description */
 	ctx->length = 0;
 	if (formatToCtxBuffer(ctx, request, ctx->path, ctx->host, ctx->port) != 1) {
-		if (ctx->verbose > 1) _ftprintf(ferr, MSGT(MSGT_ERR_FMT_DEV_DESC));
+		if (ctx->verbose > 0) _ftprintf(ferr, MSGT(MSGT_ERR_FMT_DEV_DESC));
 		goto onError;
 	}
 	if (ctx->verbose > 3) {
 		fuprintf(ferr, MSGU(MSGU_INFO_DEV_DESC_REQ), ctx->path);
 	}
 	if (ctx->request(ctx) != 1) {
-		if (ctx->verbose > 1) _ftprintf(ferr, MSGT(MSGT_ERR_GET_DEV_DESC), (unsigned)(ctx->status));
+		if (ctx->verbose > 0) _ftprintf(ferr, MSGT(MSGT_ERR_GET_DEV_DESC), (unsigned)(ctx->status));
 		goto onError;
 	}
-	if (ctx->verbose > 3) _ftprintf(ferr, MSGT(MSGT_INFO_DEV_DESC_DUR), (unsigned)(ctx->duration));
+	if (ctx->verbose > 2) _ftprintf(ferr, MSGT(MSGT_INFO_DEV_DESC_DUR), (unsigned)(ctx->duration));
 	/* parse device descriptions in used callback (see xmlDeviceDescVisitor()) */
 	{
 		obj->url = strdup(opt->url);
 		if (obj->url == NULL) {
-			if (ctx->verbose > 1) _ftprintf(ferr, MSGT(MSGT_ERR_NO_MEM));
+			if (ctx->verbose > 0) _ftprintf(ferr, MSGT(MSGT_ERR_NO_MEM));
 			goto onError;
 		}
 		tPTrObjectDeviceCtx devCtx = {
@@ -2010,17 +2211,17 @@ onCacheFileError:
 			/* skip leading slash (/) in service->path as it is already included in request */
 			ctx->length = 0;
 			if (formatToCtxBuffer(ctx, request, service->path + 1, ctx->host, ctx->port) != 1) {
-				if (ctx->verbose > 1) _ftprintf(ferr, MSGT(MSGT_ERR_FMT_SRVC_DESC));
+				if (ctx->verbose > 0) _ftprintf(ferr, MSGT(MSGT_ERR_FMT_SRVC_DESC));
 				goto onError;
 			}
-			if (ctx->verbose > 3) {
+			if (ctx->verbose > 2) {
 				fuprintf(ferr, MSGU(MSGU_INFO_SRVC_DESC_REQ), service->path);
 			}
 			if (ctx->request(ctx) != 1) {
-				if (ctx->verbose > 1) _ftprintf(ferr, MSGT(MSGT_ERR_GET_SRVC_DESC), (unsigned)(ctx->status));
+				if (ctx->verbose > 0) _ftprintf(ferr, MSGT(MSGT_ERR_GET_SRVC_DESC), (unsigned)(ctx->status));
 				goto onError;
 			}
-			if (ctx->verbose > 3) _ftprintf(ferr, MSGT(MSGT_INFO_SRVC_DESC_DUR), (unsigned)(ctx->duration));
+			if (ctx->verbose > 2) _ftprintf(ferr, MSGT(MSGT_INFO_SRVC_DESC_DUR), (unsigned)(ctx->duration));
 			/* parse service description in used callback (see xmlServiceDescVisitor()) */
 			{
 				tPTrObjectServiceCtx serviceCtx = {
@@ -2325,7 +2526,7 @@ static int xmlQueryRespVisitor(const tPSaxTokenType type, const tPToken * tokens
 					return 0; /* allocation error */
 				}
 				errno = 0;
-				if (arg->value != NULL && p_unescapeXmlVar(&(arg->value), NULL, 0) != 1) { ///////// bug
+				if (arg->value != NULL && p_unescapeXmlVar(&(arg->value), NULL, 0) != 1) {
 					if (errno == EINVAL) {
 						ctx->lastError = MSGT_ERR_QUERY_RESP_ARG_BAD_ESC;
 					} else {
@@ -2351,31 +2552,35 @@ static int xmlQueryRespVisitor(const tPSaxTokenType type, const tPToken * tokens
 
 
 /**
- * Escapes the given string to encode as CSV field.
+ * Outputs the query result in text format.
  * 
- * @param[in] str - string to escape
- * @return escapes string or NULL on error
- * @remarks The returned string may be the same as the input if no escaping was needed.
+ * @param[in,out] fd - output to this file descriptor
+ * @param[in,out] qry - query handle
+ * @param[in] action - action to output
+ * @return 1 on success, else 0
  */
-static char * escapeCsv(const char * str) {
-	if (str == NULL) return NULL;
-	/* calculate the result string size in bytes */
-	size_t resSize = 1;
-	size_t i = 0;
-	for (const char * in = str; *in != 0; in++, i++, resSize++) {
-		if (*in == '"') resSize++;
+static int trQueryOutputText(FILE * fd, tTrQueryHandler * qry, const tTrAction * action) {
+	if (fd == NULL || qry == NULL || action == NULL) return 0;
+	int ok = 1;
+	
+	qry->length = 0;
+	ok = formatToQryBuffer(qry, "%s\n", action->name);
+	for (size_t ar = 0; ar < action->length; ar++) {
+		tTrArgument * arg = action->arg + ar;
+		if (strcmp(arg->dir, "out") != 0) continue;
+		ok &= formatToQryBuffer(qry,"  %s: %s\n", arg->var, (arg->value != NULL) ? arg->value : "");
 	}
-	if ((i + 1) == resSize) return (char *)str;
-	/* create the result string */
-	char * res = (char *)malloc(sizeof(char) * resSize);
-	if (res == NULL) return NULL;
-	char * out = res;
-	for (const char * in = str; *in != 0; in++) {
-		if (*in == '"') *out++ = '"';
-		*out++ = *in;
+	if (ok != 1) goto onOutOfMemory;
+	
+	if (fputUtf8N(fd, qry->buffer, qry->length) < 1) {
+		if (qry->ctx->verbose > 0) _ftprintf(ferr, MSGT(MSGT_ERR_QUERY_PRINT));
+		return 0;
 	}
-	*out = 0;
-	return res;
+	
+	return 1;
+onOutOfMemory:
+	if (qry->ctx->verbose > 0) _ftprintf(ferr, MSGT(MSGT_ERR_NO_MEM));
+	return 0;
 }
 
 
@@ -2397,7 +2602,7 @@ static int trQueryOutputCsv(FILE * fd, tTrQueryHandler * qry, const tTrAction * 
 	for (size_t ar = 0; ar < action->length; ar++) {
 		tTrArgument * arg = action->arg + ar;
 		if (strcmp(arg->dir, "out") != 0 || arg->value == NULL) continue;
-		escStr = escapeCsv(arg->var);
+		escStr = escapeCsv(arg->var, (size_t)-1);
 		if (escStr == NULL) goto onOutOfMemory;
 		ok &= formatToQryBuffer(qry, first ? "\"%s\"" : ",\"%s\"", escStr);
 		if (escStr != arg->var) free(escStr);
@@ -2415,7 +2620,7 @@ static int trQueryOutputCsv(FILE * fd, tTrQueryHandler * qry, const tTrAction * 
 			if (first != 0) ok &= formatToQryBuffer(qry, ",");
 			continue;
 		}
-		escStr = escapeCsv(arg->value);
+		escStr = escapeCsv(arg->value, (size_t)-1);
 		if (escStr == NULL) goto onOutOfMemory;
 		ok &= formatToQryBuffer(qry, first ? "\"%s\"" : ",\"%s\"", escStr);
 		if (escStr != arg->value) free(escStr);
@@ -2425,112 +2630,14 @@ static int trQueryOutputCsv(FILE * fd, tTrQueryHandler * qry, const tTrAction * 
 	if (ok != 1) goto onOutOfMemory;
 	
 	if (fputUtf8N(fd, qry->buffer, qry->length) < 1) {
-		if (qry->ctx->verbose > 1) _ftprintf(ferr, MSGT(MSGT_ERR_QUERY_PRINT));
+		if (qry->ctx->verbose > 0) _ftprintf(ferr, MSGT(MSGT_ERR_QUERY_PRINT));
 		return 0;
 	}
 	
 	return 1;
 onOutOfMemory:
-	if (qry->ctx->verbose > 1) _ftprintf(ferr, MSGT(MSGT_ERR_NO_MEM));
+	if (qry->ctx->verbose > 0) _ftprintf(ferr, MSGT(MSGT_ERR_NO_MEM));
 	return 0;
-}
-
-
-/**
- * Escapes the given string to encode as JSON string.
- * 
- * @param[in] str - string to escape
- * @return escapes string or NULL on error
- * @remarks The returned string may be the same as the input if no escaping was needed.
- * @see https://tools.ietf.org/html/rfc8259#section-7
- */
-static char * escapeJson(const char * str) {
-	static const char hex[] = "0123456789ABCDEF";
-	if (str == NULL) return NULL;
-	/* calculate the result string size in bytes */
-	size_t resSize = 1;
-	size_t i = 0;
-	for (const char * in = str; *in != 0; in++, i++) {
-		switch (*in) {
-		case '"':
-		case '\\':
-		case '/':
-		case '\b':
-		case '\f':
-		case '\n':
-		case '\r':
-		case '\t':
-			resSize += 2;
-			break;
-		default:
-			if (*in < 0x20) {
-				resSize += 6;
-			} else {
-				resSize++;
-			}
-			break;
-		}
-	}
-	if ((i + 1) == resSize) return (char *)str;
-	/* create the result string */
-	char * res = (char *)malloc(sizeof(char) * resSize);
-	if (res == NULL) return NULL;
-	char * out = res;
-	for (const char * in = str; *in != 0; in++) {
-		switch (*in) {
-		case '"':  *out++ = '\\'; *out++ = '"';  break;
-		case '\\': *out++ = '\\'; *out++ = '\\'; break;
-		case '/':  *out++ = '\\'; *out++ = '/';  break;
-		case '\b': *out++ = '\\'; *out++ = 'b';  break;
-		case '\f': *out++ = '\\'; *out++ = 'f';  break;
-		case '\n': *out++ = '\\'; *out++ = 'n';  break;
-		case '\r': *out++ = '\\'; *out++ = 'r';  break;
-		case '\t': *out++ = '\\'; *out++ = 't';  break;
-		default:
-			if (*in < 0x20) {
-				*out++ = '\\';
-				*out++ = 'u';
-				*out++ = '0';
-				*out++ = '0';
-				*out++ = hex[(*in >> 4) & 0x0F];
-				*out++ = hex[*in & 0x0F];
-			} else {
-				*out++ = *in;
-			}
-			break;
-		}
-	}
-	*out = 0;
-	return res;
-}
-
-
-/**
- * Maps the given TR-064 argument type to a JSON type.
- * 
- * @param[in] type - TR-064 argument type
- * @return mapped JSON type
- */
-static tJsonType mapToJsonType(const char * type) {
-	if (type == NULL) return JT_NULL;
-	if (stricmp(type, "boolean") == 0) return JT_BOOLEAN;
-	if (tolower(*type) == 'u') type++;
-	if (tolower(*type) != 'i') return JT_STRING;
-	char * endPtr = NULL;
-	unsigned long bits = strtoul(type + 1, &endPtr, 10);
-	if (endPtr != NULL && *endPtr == 0) {
-		switch (bits) {
-		case 1:
-		case 2:
-		case 4:
-		case 8:
-			return JT_NUMBER;
-			break;
-		default:
-			break;
-		}
-	}
-	return JT_STRING;
 }
 
 
@@ -2548,7 +2655,7 @@ static int trQueryOutputJson(FILE * fd, tTrQueryHandler * qry, const tTrAction *
 	char * escStr;
 	
 	qry->length = 0;
-	escStr = escapeJson(action->name);
+	escStr = escapeJson(action->name, (size_t)-1);
 	if (escStr == NULL) goto onOutOfMemory;
 	ok = formatToQryBuffer(qry, "{\"%s\":{\n", escStr);
 	if (escStr != action->name) free(escStr);
@@ -2556,9 +2663,9 @@ static int trQueryOutputJson(FILE * fd, tTrQueryHandler * qry, const tTrAction *
 		tTrArgument * arg = action->arg + ar;
 		if (strcmp(arg->dir, "out") != 0) continue;
 		/* key */
-		escStr = escapeJson(arg->var);
+		escStr = escapeJson(arg->var, (size_t)-1);
 		if (escStr == NULL) goto onOutOfMemory;
-		ok &= formatToQryBuffer(qry, first ? " \"%s\":" : ",\n \"%s\":", escStr);
+		ok &= formatToQryBuffer(qry, first ? "  \"%s\":" : ",\n  \"%s\":", escStr);
 		if (escStr != arg->var) free(escStr);
 		/* value */
 		if (arg->value == NULL) {
@@ -2583,7 +2690,7 @@ static int trQueryOutputJson(FILE * fd, tTrQueryHandler * qry, const tTrAction *
 			}
 			/* fall-through */
 		case JT_STRING:
-			escStr = escapeJson(arg->value);
+			escStr = escapeJson(arg->value, (size_t)-1);
 			if (escStr == NULL) goto onOutOfMemory;
 			ok &= formatToQryBuffer(qry, "\"%s\"", escStr);
 			if (escStr != arg->value) free(escStr);
@@ -2595,13 +2702,13 @@ static int trQueryOutputJson(FILE * fd, tTrQueryHandler * qry, const tTrAction *
 	if (ok != 1) goto onOutOfMemory;
 	
 	if (fputUtf8N(fd, qry->buffer, qry->length) < 1) {
-		if (qry->ctx->verbose > 1) _ftprintf(ferr, MSGT(MSGT_ERR_QUERY_PRINT));
+		if (qry->ctx->verbose > 0) _ftprintf(ferr, MSGT(MSGT_ERR_QUERY_PRINT));
 		return 0;
 	}
 	
 	return 1;
 onOutOfMemory:
-	if (qry->ctx->verbose > 1) _ftprintf(ferr, MSGT(MSGT_ERR_NO_MEM));
+	if (qry->ctx->verbose > 0) _ftprintf(ferr, MSGT(MSGT_ERR_NO_MEM));
 	return 0;
 }
 
@@ -2625,7 +2732,7 @@ static int trQueryOutputXml(FILE * fd, tTrQueryHandler * qry, const tTrAction * 
 		tTrArgument * arg = action->arg + ar;
 		if (strcmp(arg->dir, "out") != 0) continue;
 		/* start tag */
-		ok &= formatToQryBuffer(qry, " <%s>", arg->var);
+		ok &= formatToQryBuffer(qry, "  <%s>", arg->var);
 		/* value */
 		if (arg->value != NULL) {
 			escStr = p_escapeXml(arg->value, (size_t)-1);
@@ -2640,13 +2747,13 @@ static int trQueryOutputXml(FILE * fd, tTrQueryHandler * qry, const tTrAction * 
 	if (ok != 1) goto onOutOfMemory;
 	
 	if (fputUtf8N(fd, qry->buffer, qry->length) < 1) {
-		if (qry->ctx->verbose > 1) _ftprintf(ferr, MSGT(MSGT_ERR_QUERY_PRINT));
+		if (qry->ctx->verbose > 0) _ftprintf(ferr, MSGT(MSGT_ERR_QUERY_PRINT));
 		return 0;
 	}
 		
 	return 1;
 onOutOfMemory:
-	if (qry->ctx->verbose > 1) _ftprintf(ferr, MSGT(MSGT_ERR_NO_MEM));
+	if (qry->ctx->verbose > 0) _ftprintf(ferr, MSGT(MSGT_ERR_NO_MEM));
 	return 0;
 }
 
@@ -2696,7 +2803,7 @@ static int trQuery(tTrQueryHandler * qry, const tOptions * opt, int argIndex) {
 	
 	/* select the matching action description */
 	if (obj->device == NULL) {
-		if (opt->verbose > 1) _ftprintf(ferr, MSGT(MSGT_ERR_NO_DEV_IN_DESC));
+		if (opt->verbose > 0) _ftprintf(ferr, MSGT(MSGT_ERR_NO_DEV_IN_DESC));
 		goto onError;
 	}
 	for (size_t d = 0; d < obj->length; d++) {
@@ -2720,7 +2827,7 @@ static int trQuery(tTrQueryHandler * qry, const tOptions * opt, int argIndex) {
 		}
 	}
 	if (service == NULL || action == NULL) {
-		if (opt->verbose > 1) _ftprintf(ferr, MSGT(MSGT_ERR_OPT_BAD_ACTION));
+		if (opt->verbose > 0) _ftprintf(ferr, MSGT(MSGT_ERR_OPT_BAD_ACTION));
 		goto onError;
 	}
 	if (opt->verbose > 3) {
@@ -2741,7 +2848,7 @@ static int trQuery(tTrQueryHandler * qry, const tOptions * opt, int argIndex) {
 			/* strncmp does not work to match two strings completely */
 			if (strcmp(arg->var, opt->args[i]) == 0) {
 				if (ok == 1) {
-					if (ctx->verbose > 1) fuprintf(ferr, MSGU(MSGU_ERR_OPT_AMB_IN_ARG), arg->var);
+					if (ctx->verbose > 0) fuprintf(ferr, MSGU(MSGU_ERR_OPT_AMB_IN_ARG), arg->var);
 					goto onError;
 				}
 				ok = 1;
@@ -2749,12 +2856,12 @@ static int trQuery(tTrQueryHandler * qry, const tOptions * opt, int argIndex) {
 				if (arg->value != NULL) free(arg->value);
 				arg->value = strdup(sep + 1);
 				if (arg->value == NULL) {
-					if (ctx->verbose > 1) _ftprintf(ferr, MSGT(MSGT_ERR_NO_MEM));
+					if (ctx->verbose > 0) _ftprintf(ferr, MSGT(MSGT_ERR_NO_MEM));
 					goto onError;
 				}
 				/* XML escape value */
 				if (p_escapeXmlVar(&(arg->value)) != 1) {
-					if (ctx->verbose > 1) _ftprintf(ferr, MSGT(MSGT_ERR_NO_MEM));
+					if (ctx->verbose > 0) _ftprintf(ferr, MSGT(MSGT_ERR_NO_MEM));
 					goto onError;
 				}
 				/* format argument */
@@ -2763,14 +2870,14 @@ static int trQuery(tTrQueryHandler * qry, const tOptions * opt, int argIndex) {
 			*sep = '=';
 		}
 		if (ok != 1) {
-			if (ctx->verbose > 1) fuprintf(ferr, MSGU(MSGU_ERR_OPT_NO_IN_ARG), arg->var);
+			if (ctx->verbose > 0) fuprintf(ferr, MSGU(MSGU_ERR_OPT_NO_IN_ARG), arg->var);
 			goto onError;
 		}
 	}
 	fmt &= formatToQryBuffer(qry, "</u:%s>\n%s", action->name, tail);
 	
 	if (fmt != 1) {
-		if (ctx->verbose > 1) _ftprintf(ferr, MSGT(MSGT_ERR_FMT_QUERY));
+		if (ctx->verbose > 0) _ftprintf(ferr, MSGT(MSGT_ERR_FMT_QUERY));
 		goto onError;
 	}
 	
@@ -2792,7 +2899,7 @@ onAuthentication:
 		qry->buffer
 	);
 	if (fmt != 1) {
-		if (ctx->verbose > 1) _ftprintf(ferr, MSGT(MSGT_ERR_FMT_QUERY));
+		if (ctx->verbose > 0) _ftprintf(ferr, MSGT(MSGT_ERR_FMT_QUERY));
 		goto onError;
 	}
 	
@@ -2800,7 +2907,7 @@ onAuthentication:
 	if (ctx->method != NULL) free(ctx->method);
 	ctx->method = strdup("POST");
 	if (ctx->method == NULL) {
-		if (ctx->verbose > 1) _ftprintf(ferr, MSGT(MSGT_ERR_NO_MEM));
+		if (ctx->verbose > 0) _ftprintf(ferr, MSGT(MSGT_ERR_NO_MEM));
 		goto onError;
 	}
 	
@@ -2818,7 +2925,14 @@ onAuthentication:
 			/* retry with proper authentication */
 			goto onAuthentication;
 		} else {
-			if (ctx->verbose > 1) _ftprintf(ferr, MSGT(MSGT_ERR_GET_QUERY_RESP), (unsigned)(ctx->status));
+			if (ctx->verbose > 0) {
+				const tHttpStatusMsg * item = (const tHttpStatusMsg *)bs_staticArray(&(ctx->status), httpStatMsg, cmpHttpStatusMsg);
+				if (item != NULL) {
+					_ftprintf(ferr, MSGT(MSGT_ERR_GET_QUERY_RESP_STR), (unsigned)(ctx->status), item->string);
+				} else  {
+					_ftprintf(ferr, MSGT(MSGT_ERR_GET_QUERY_RESP), (unsigned)(ctx->status));
+				}
+			}
 			goto onError;
 		}
 	}
@@ -2875,6 +2989,7 @@ onError:
  */
 tTrQueryHandler * newTrQueryHandler(tTr64RequestCtx * ctx, tTrObject * obj, const tOptions * opt) {
 	static int (* writer[])(FILE *, tTrQueryHandler *, const tTrAction *) = {
+		trQueryOutputText,
 		trQueryOutputCsv,
 		trQueryOutputJson,
 		trQueryOutputXml
@@ -2951,12 +3066,51 @@ static int printDiscoveredDevices(const char * buffer, const size_t length, void
 	static const char * st = "urn:dslforum-org:device:InternetGatewayDevice:1";
 	tTr64RequestCtx * ctx = (tTr64RequestCtx *)param;
 	tPToken tokens[3] = {0}; /* ST, SERVER, LOCATION */
+	char * esc[2] = {0};
+	size_t len[2];
 	if (buffer == NULL || ctx == NULL) return 0;
+#define ESC(fn) \
+				esc[0] = fn(tokens[1].start, tokens[1].length); \
+				if (esc[0] == NULL) break; \
+				esc[1] = fn(tokens[2].start, tokens[2].length); \
+				if (esc[1] == NULL) { \
+					if (esc[0] != tokens[1].start) free(esc[0]); \
+					esc[0] = NULL; \
+					break; \
+				} \
+				len[0] = (esc[0] != tokens[1].start) ? strlen(esc[0]) : tokens[1].length; \
+				len[1] = (esc[1] != tokens[2].start) ? strlen(esc[1]) : tokens[2].length;
 	switch (p_http(buffer, length, NULL, parseDiscoveryDevice, tokens)) {
 	case PHRT_SUCCESS:
 		if (tokens[0].start != NULL && tokens[1].start != NULL && tokens[2].start != NULL && p_cmpToken(tokens, st) == 0) {
 			/* print valid response */
-			fuprintf(ferr, "Device: %.*s\nURL:    %.*s\n", (unsigned)(tokens[1].length), tokens[1].start, (unsigned)(tokens[2].length), tokens[2].start);
+			switch (ctx->format) {
+			case F_TEXT:
+				fuprintf(fout, "Device: %.*s\nURL:    %.*s\n", (unsigned)(tokens[1].length), tokens[1].start, (unsigned)(tokens[2].length), tokens[2].start);
+				break;
+			case F_CSV:
+				ESC(escapeCsv)
+				fuprintf(fout, "\"%.*s\",\"%.*s\"\n", (unsigned)(len[0]), esc[0], (unsigned)(len[1]), esc[1]);
+				if (esc[0] != tokens[1].start) free(esc[0]);
+				if (esc[1] != tokens[2].start) free(esc[1]);
+				memset(esc, 0, sizeof(esc));
+				break;
+			case F_JSON:
+				ESC(escapeJson)
+				fuprintf(fout, "%s\n  {\"Device\":\"%.*s\",\"URL\":\"%.*s\"}", (ctx->discoveryCount > 0) ? "," : "", (unsigned)(len[0]), esc[0], (unsigned)(len[1]), esc[1]);
+				if (esc[0] != tokens[1].start) free(esc[0]);
+				if (esc[1] != tokens[2].start) free(esc[1]);
+				memset(esc, 0, sizeof(esc));
+				break;
+			case F_XML:
+				ESC(p_escapeXml)
+				fuprintf(fout, "\n  <Device>\n    <Name>%.*s</Name>\n    <URL>%.*s</URL>\n  </Device>", (unsigned)(len[0]), esc[0], (unsigned)(len[1]), esc[1]);
+				if (esc[0] != tokens[1].start) free(esc[0]);
+				if (esc[1] != tokens[2].start) free(esc[1]);
+				memset(esc, 0, sizeof(esc));
+				break;
+			}
+			ctx->discoveryCount++;
 		}
 		break;
 	case PHRT_UNEXPECTED_END:
@@ -2967,6 +3121,7 @@ static int printDiscoveredDevices(const char * buffer, const size_t length, void
 		break;
 	}
 	return 1;
+#undef ESC
 }
 
 
@@ -3125,15 +3280,15 @@ int handleQuery(tOptions * opt) {
 	int res = 0;
 	
 	if (opt->service == NULL) {
-		if (opt->verbose > 1) _ftprintf(ferr, MSGT(MSGT_ERR_OPT_NO_SERVICE));
+		if (opt->verbose > 0) _ftprintf(ferr, MSGT(MSGT_ERR_OPT_NO_SERVICE));
 		goto onError;
 	}
 	if (opt->action == NULL) {
-		if (opt->verbose > 1) _ftprintf(ferr, MSGT(MSGT_ERR_OPT_NO_ACTION));
+		if (opt->verbose > 0) _ftprintf(ferr, MSGT(MSGT_ERR_OPT_NO_ACTION));
 		goto onError;
 	}
 	
-	ctx = newTr64Request(opt->url, opt->user, opt->pass, opt->timeout, opt->verbose);
+	ctx = newTr64Request(opt->url, opt->user, opt->pass, opt->format, opt->timeout, opt->verbose);
 	if (ctx == NULL) goto onError;
 	if (ctx->resolve(ctx) != 1) goto onError;
 	obj = newTrObject(ctx, opt);
@@ -3176,14 +3331,43 @@ int handleScan(tOptions * opt) {
 	if (opt->timeout < 1000 && opt->verbose > 1) {
 		_ftprintf(ferr, MSGT(MSGT_WARN_OPT_LOW_TIMEOUT));
 	}
-	tTr64RequestCtx * ctx = newTr64Request("239.255.255.250:1900", NULL, NULL, opt->timeout, opt->verbose);
+	tTr64RequestCtx * ctx = newTr64Request("239.255.255.250:1900", NULL, NULL, opt->format, opt->timeout, opt->verbose);
 	if (ctx == NULL) goto onError;
 	if (formatToCtxBuffer(ctx, request, ctx->host, ctx->port, (int)PCF_MAX(1, PCF_MIN(5, (ctx->timeout / 1000) - 1))) != 1) {
 		if (opt->verbose > 0) _ftprintf(ferr, MSGT(MSGT_ERR_FMT_SSDP));
 		goto onError;
 	}
 	
+	/* output header */
+	switch (ctx->format) {
+	case F_TEXT:
+		break;
+	case F_CSV:
+		_ftprintf(fout, _T("\"Device\",\"URL\"\n"));
+		break;
+	case F_JSON:
+		_ftprintf(fout, _T("["));
+		break;
+	case F_XML:
+		_ftprintf(fout, _T("<TR-064>"));
+		break;
+	}
+	
+	/* output elements */
 	if (ctx->discover(ctx, opt->url, printDiscoveredDevices, ctx) != 1) goto onError;
+	
+	/* output footer */
+	switch (ctx->format) {
+	case F_TEXT:
+	case F_CSV:
+		break;
+	case F_JSON:
+		_ftprintf(fout, _T("\n]\n"));
+		break;
+	case F_XML:
+		_ftprintf(fout, _T("\n</TR-064>\n"));
+		break;
+	}
 	
 	res = 1;
 onError:
@@ -3193,13 +3377,13 @@ onError:
 
 
 /**
- * Outputs the possible actions from the given parameters.
+ * Outputs the possible actions from the given parameters as plain text.
  * 
  * @param[in,out] ctx - use this request context to build the output
  * @param[in] obj - use this device description
  * @return 1 on success, else 0
  */
-static int lOutputList(tTr64RequestCtx * ctx, const tTrObject * obj) {
+static int trListOutputText(tTr64RequestCtx * ctx, const tTrObject * obj) {
 	if (ctx == NULL || obj == NULL || obj->name == NULL || obj->device == NULL) return 0;
 	int ok = 1;
 	
@@ -3234,17 +3418,270 @@ static int lOutputList(tTr64RequestCtx * ctx, const tTrObject * obj) {
 
 
 /**
+ * Outputs the possible actions from the given parameters in CSV format.
+ * 
+ * @param[in,out] ctx - use this request context to build the output
+ * @param[in] obj - use this device description
+ * @return 1 on success, else 0
+ */
+static int trListOutputCsv(tTr64RequestCtx * ctx, const tTrObject * obj) {
+	if (ctx == NULL || obj == NULL || obj->name == NULL || obj->device == NULL) return 0;
+	char * escObject = NULL;
+	char * escDevice = NULL;
+	char * escService = NULL;
+	char * escAction = NULL;
+	char * escVar = NULL;
+	char * escDir = NULL;
+	char * escType = NULL;
+	int newObject = 0, newDevice = 0, newService = 0, newAction = 0, newVar = 0, newDir = 0, newType = 0;
+	int res = 0, ok = 1;
+	
+	ctx->length = 0;
+	/* build header */
+	ok &= formatToCtxBuffer(ctx, "\"Object\",\"Device\",\"Service\",\"Action\",\"Variable\",\"Dir\",\"Type\"\n");
+	/* build records */
+#define ESC(dst, src) \
+	if (new##dst != 0) { \
+		free(esc##dst); \
+		esc##dst = NULL; \
+		new##dst = 0; \
+	} \
+	esc##dst = escapeCsv((src), (size_t)-1); \
+	if (esc##dst == NULL) goto onOutOfMemory; \
+	if (esc##dst != (src)) new##dst = 1;
+	ESC(Object, obj->name)
+	for (size_t d = 0; d < obj->length; d++) {
+		const tTrDevice * device = obj->device + d;
+		ESC(Device, device->name)
+		if (device->service == NULL) continue;
+		for (size_t s = 0; s < device->length; s++) {
+			const tTrService * service = device->service + s;
+			ESC(Service, service->name)
+			if (service->action == NULL) continue;
+			for (size_t ac = 0; ac < service->length; ac++) {
+				const tTrAction * action = service->action + ac;
+				ESC(Action, action->name)
+				if (action->arg == NULL) {
+					ok &= formatToCtxBuffer(ctx, "\"%s\",\"%s\",\"%s\",\"%s\",,,\n", escObject, escDevice, escService, escAction);
+					continue;
+				}
+				for (size_t ar = 0; ar < action->length; ar++) {
+					const tTrArgument * arg = action->arg + ar;
+					ESC(Var, arg->var)
+					ESC(Dir, arg->dir)
+					ESC(Type, arg->type)
+					ok &= formatToCtxBuffer(ctx, "\"%s\",\"%s\",\"%s\",\"%s\",\"%s\",\"%s\",\"%s\"\n", escObject, escDevice, escService, escAction, escVar, escDir, escType);
+				}
+			}
+		}
+	}
+#undef ESC
+	if (ok == 1) {
+		fputUtf8N(fout, ctx->buffer, ctx->length);
+		res = 1;
+	}
+	
+onOutOfMemory:
+	if (newObject != 0) free(escObject);
+	if (newDevice != 0) free(escDevice);
+	if (newService != 0) free(escService);
+	if (newAction != 0) free(escAction);
+	if (newVar != 0) free(escVar);
+	if (newDir != 0) free(escDir);
+	if (newType != 0) free(escType);
+
+	if (res != 1 && ctx->verbose > 1) _ftprintf(ferr, MSGT(MSGT_WARN_LIST_NO_MEM));
+	
+	return res;
+}
+
+
+/**
+ * Outputs the possible actions from the given parameters in JSON format.
+ * 
+ * @param[in,out] ctx - use this request context to build the output
+ * @param[in] obj - use this device description
+ * @return 1 on success, else 0
+ */
+static int trListOutputJson(tTr64RequestCtx * ctx, const tTrObject * obj) {
+	if (ctx == NULL || obj == NULL || obj->name == NULL || obj->device == NULL) return 0;
+	char * escObject = NULL;
+	char * escDevice = NULL;
+	char * escService = NULL;
+	char * escAction = NULL;
+	char * escVar = NULL;
+	char * escDir = NULL;
+	char * escType = NULL;
+	int newObject = 0, newDevice = 0, newService = 0, newAction = 0, newVar = 0, newDir = 0, newType = 0;
+	int res = 0, ok = 1;
+	
+	ctx->length = 0;
+#define ESC(dst, src) \
+	if (new##dst != 0) { \
+		free(esc##dst); \
+		esc##dst = NULL; \
+		new##dst = 0; \
+	} \
+	esc##dst = escapeJson((src), (size_t)-1); \
+	if (esc##dst == NULL) goto onOutOfMemory; \
+	if (esc##dst != (src)) new##dst = 1;
+	ESC(Object, obj->name)
+	ok &= formatToCtxBuffer(ctx, "{\"%s\":{\n", escObject);
+	for (size_t d = 0; d < obj->length; d++) {
+		const tTrDevice * device = obj->device + d;
+		ESC(Device, device->name)
+		ok &= formatToCtxBuffer(ctx, "  \"%s\":{\n", escDevice);
+		if (device->service != NULL) {
+			for (size_t s = 0; s < device->length; s++) {
+				const tTrService * service = device->service + s;
+				ESC(Service, service->name)
+				ok &= formatToCtxBuffer(ctx, "    \"%s\":{\n", escService);
+				if (service->action != NULL) {
+					for (size_t ac = 0; ac < service->length; ac++) {
+						const tTrAction * action = service->action + ac;
+						ESC(Action, action->name)
+						ok &= formatToCtxBuffer(ctx, "      \"%s\":[\n", escAction);
+						if (action->arg != NULL) {
+							for (size_t ar = 0; ar < action->length; ar++) {
+								const tTrArgument * arg = action->arg + ar;
+								ESC(Var, arg->var)
+								ESC(Dir, arg->dir)
+								ESC(Type, arg->type)
+								ok &= formatToCtxBuffer(ctx, "        {\"Var\":\"%s\", \"Dir\":\"%s\", \"Type\":\"%s\"}%s\n", escVar, escDir, escType, ((ar + 1) < action->length) ? "," : "");
+							}
+						}
+						ok &= formatToCtxBuffer(ctx, "      ]%s\n", ((ac + 1) < service->length) ? "," : "");
+					}
+				}
+				ok &= formatToCtxBuffer(ctx, "    }%s\n", ((s + 1) < device->length) ? "," : "");
+			}
+		}
+		ok &= formatToCtxBuffer(ctx, "  }%s\n", ((d + 1) < obj->length) ? "," : "");
+	}
+	ok &= formatToCtxBuffer(ctx, "}}\n");
+#undef ESC
+	if (ok == 1) {
+		fputUtf8N(fout, ctx->buffer, ctx->length);
+		res = 1;
+	}
+	
+onOutOfMemory:
+	if (newObject != 0) free(escObject);
+	if (newDevice != 0) free(escDevice);
+	if (newService != 0) free(escService);
+	if (newAction != 0) free(escAction);
+	if (newVar != 0) free(escVar);
+	if (newDir != 0) free(escDir);
+	if (newType != 0) free(escType);
+
+	if (res != 1 && ctx->verbose > 1) _ftprintf(ferr, MSGT(MSGT_WARN_LIST_NO_MEM));
+	
+	return res;
+}
+
+
+/**
+ * Outputs the possible actions from the given parameters in XML format.
+ * 
+ * @param[in,out] ctx - use this request context to build the output
+ * @param[in] obj - use this device description
+ * @return 1 on success, else 0
+ */
+static int trListOutputXml(tTr64RequestCtx * ctx, const tTrObject * obj) {
+	if (ctx == NULL || obj == NULL || obj->name == NULL || obj->device == NULL) return 0;
+	char * escObject = NULL;
+	char * escDevice = NULL;
+	char * escService = NULL;
+	char * escAction = NULL;
+	char * escVar = NULL;
+	char * escDir = NULL;
+	char * escType = NULL;
+	int newObject = 0, newDevice = 0, newService = 0, newAction = 0, newVar = 0, newDir = 0, newType = 0;
+	int res = 0, ok = 1;
+	
+	ctx->length = 0;
+#define ESC(dst, src) \
+	if (new##dst != 0) { \
+		free(esc##dst); \
+		esc##dst = NULL; \
+		new##dst = 0; \
+	} \
+	esc##dst = p_escapeXml((src), (size_t)-1); \
+	if (esc##dst == NULL) goto onOutOfMemory; \
+	if (esc##dst != (src)) new##dst = 1;
+	ESC(Object, obj->name)
+	ok &= formatToCtxBuffer(ctx, "<Object name=\"%s\">\n", escObject);
+	for (size_t d = 0; d < obj->length; d++) {
+		const tTrDevice * device = obj->device + d;
+		ESC(Device, device->name)
+		ok &= formatToCtxBuffer(ctx, "  <Device name=\"%s\">\n", escDevice);
+		if (device->service != NULL) {
+			for (size_t s = 0; s < device->length; s++) {
+				const tTrService * service = device->service + s;
+				ESC(Service, service->name)
+				ok &= formatToCtxBuffer(ctx, "    <Service name=\"%s\">\n", escService);
+				if (service->action != NULL) {
+					for (size_t ac = 0; ac < service->length; ac++) {
+						const tTrAction * action = service->action + ac;
+						ESC(Action, action->name)
+						ok &= formatToCtxBuffer(ctx, "      <Action name=\"%s\">\n", escAction);
+						if (action->arg != NULL) {
+							for (size_t ar = 0; ar < action->length; ar++) {
+								const tTrArgument * arg = action->arg + ar;
+								ESC(Var, arg->var)
+								ESC(Dir, arg->dir)
+								ESC(Type, arg->type)
+								ok &= formatToCtxBuffer(ctx, "        <Var name=\"%s\" dir=\"%s\" type=\"%s\"/>\n", escVar, escDir, escType);
+							}
+						}
+						ok &= formatToCtxBuffer(ctx, "      </Action>\n");
+					}
+				}
+				ok &= formatToCtxBuffer(ctx, "    </Service>\n");
+			}
+		}
+		ok &= formatToCtxBuffer(ctx, "  </Device>\n");
+	}
+	ok &= formatToCtxBuffer(ctx, "</Object>\n");
+#undef ESC
+	if (ok == 1) {
+		fputUtf8N(fout, ctx->buffer, ctx->length);
+		res = 1;
+	}
+	
+onOutOfMemory:
+	if (newObject != 0) free(escObject);
+	if (newDevice != 0) free(escDevice);
+	if (newService != 0) free(escService);
+	if (newAction != 0) free(escAction);
+	if (newVar != 0) free(escVar);
+	if (newDir != 0) free(escDir);
+	if (newType != 0) free(escType);
+
+	if (res != 1 && ctx->verbose > 1) _ftprintf(ferr, MSGT(MSGT_WARN_LIST_NO_MEM));
+	
+	return res;
+}
+
+
+/**
  * List available actions.
  * 
  * @param[in] opt - given options
  * @return 1 on success, else 0
  */
 int handleList(tOptions * opt) {
+	static int (* writer[])(tTr64RequestCtx *, const tTrObject *) = {
+		trListOutputText,
+		trListOutputCsv,
+		trListOutputJson,
+		trListOutputXml
+	};
 	if (opt->mode != M_LIST) return 0;
 	tTr64RequestCtx * ctx = NULL;
 	tTrObject * obj = NULL;
 	int res = 0;
-	ctx = newTr64Request(opt->url, opt->user, opt->pass, opt->timeout, opt->verbose);
+	ctx = newTr64Request(opt->url, opt->user, opt->pass, opt->format, opt->timeout, opt->verbose);
 	if (ctx == NULL) goto onError;
 	if (ctx->resolve(ctx) != 1) goto onError;
 	obj = newTrObject(ctx, opt);
@@ -3252,11 +3689,11 @@ int handleList(tOptions * opt) {
 	
 	ctx->length = 0;
 	if (obj->device == NULL) {
-		if (opt->verbose > 1) _ftprintf(ferr, MSGT(MSGT_ERR_NO_DEV_IN_DESC));
+		if (opt->verbose > 0) _ftprintf(ferr, MSGT(MSGT_ERR_NO_DEV_IN_DESC));
 		goto onError;
 	}
 	
-	res = lOutputList(ctx, obj);
+	res = writer[opt->format](ctx, obj);
 onError:
 	if (ctx != NULL) freeTr64Request(ctx);
 	if (obj != NULL) freeTrObject(obj);
@@ -3271,6 +3708,12 @@ onError:
  * @return 1 on success, else 0
  */
 int handleInteractive(tOptions * opt) {
+	static int (* listOutput[])(tTr64RequestCtx *, const tTrObject *) = {
+		trListOutputText,
+		trListOutputCsv,
+		trListOutputJson,
+		trListOutputXml
+	};
 	if (opt->mode != M_INTERACTIVE) return 0;
 	tTr64RequestCtx * ctx = NULL;
 	tTrObject * obj = NULL;
@@ -3278,7 +3721,7 @@ int handleInteractive(tOptions * opt) {
 	tReadLineBuf line[1] = {0};
 	int len, res = 0;
 	
-	ctx = newTr64Request(opt->url, opt->user, opt->pass, opt->timeout, opt->verbose);
+	ctx = newTr64Request(opt->url, opt->user, opt->pass, opt->format, opt->timeout, opt->verbose);
 	if (ctx == NULL) goto onError;
 	if (ctx->resolve(ctx) != 1) goto onError;
 	obj = newTrObject(ctx, opt);
@@ -3287,6 +3730,8 @@ int handleInteractive(tOptions * opt) {
 	if (qry == NULL) goto onError;
 	
 	while (signalReceived == 0) {
+		fflush(fout);
+		fflush(ferr);
 #ifdef UNICODE
 		len = getLineUtf8(line, fin, opt->narrow);
 #else /* UNICODE */
@@ -3302,10 +3747,10 @@ int handleInteractive(tOptions * opt) {
 		} else if (feof(fin) || strncmp(opt->args[0], "EXIT", strlen(opt->args[0])) == 0) {
 			break;
 		} else if (strncmp(opt->args[0], "LIST", strlen(opt->args[0])) == 0) {
-			lOutputList(ctx, obj);
+			listOutput[opt->format](ctx, obj);
 		} else if (strncmp(opt->args[0], "QUERY", strlen(opt->args[0])) == 0) {
 			if (opt->argCount < 2) {
-				if (opt->verbose > 1) _ftprintf(ferr, MSGT(MSGT_WARN_BAD_CMD));
+				if (opt->verbose > 0) _ftprintf(ferr, MSGT(MSGT_ERR_BAD_CMD));
 				continue;
 			}
 			/* perform query */
@@ -3315,9 +3760,10 @@ int handleInteractive(tOptions * opt) {
 			}
 			qry->query(qry, opt, 2);
 		} else {
-			if (opt->verbose > 1) _ftprintf(ferr, MSGT(MSGT_WARN_BAD_CMD));
+			if (opt->verbose > 0) _ftprintf(ferr, MSGT(MSGT_ERR_BAD_CMD));
+			continue;
 		}
-		fflush(fout);
+		_ftprintf(fout, _T("\n"));
 	}
 	
 	res = 1;
